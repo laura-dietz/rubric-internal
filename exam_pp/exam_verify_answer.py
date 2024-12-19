@@ -150,7 +150,7 @@ class Text2TextPipeline():
     """QA Pipeline for text2text based question answer checking"""
 
     def __init__(self, model_name:str):
-        self.question_batchSize = 100 # batchSize
+        self.question_batch_size = 100 # batchSize
     
         # Initialize the tokenizer and model
         # self.modelName = 'google/flan-t5-large'
@@ -174,7 +174,7 @@ class Text2TextPipeline():
     def batchChunker(self, iterable):
         iterator = iter(iterable)
         while True:
-            batch = list(itertools.islice(iterator, self.question_batchSize))
+            batch = list(itertools.islice(iterator, self.question_batch_size))
             if not batch or len(batch)<1:
                 break
             yield batch

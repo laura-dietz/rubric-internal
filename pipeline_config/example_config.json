@@ -1,0 +1,14 @@
+{
+  "hf_model_init": {
+    "device_map": "auto"
+  },
+  "hf_tokenizer_init": {
+  },
+  "hf_pipeline_init": {
+    "batch_size": 1,
+    "device": null
+  },
+  "hf_pipeline_call": {
+    "num_beams": 4 
+  }
+}

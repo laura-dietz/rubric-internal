@@ -13,6 +13,7 @@ from .t5_qa import *
 from .data_model import ExamGrades, FullParagraphData, Grades, SelfRating, dumpQueryWithFullParagraphList, parseQueryWithFullParagraphs
 from . import tqa_loader
 
+
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=100)
 
 def fix_car_query_id(input:List[Tuple[str,List[Prompt]]]) -> List[Tuple[str,List[Prompt]]]:
@@ -39,7 +40,7 @@ def self_ratings_from_prompt(prompt:Prompt, answer)->SelfRating:
         raise RuntimeError(f"Unknown self rating prompt: {prompt}. \n Prompt-type:{prompt.prompt_type()}")
 
 
-async def noodle_grading_rubric(queryWithFullParagraphList, grading_prompts:List[Prompt], qaPipeline, max_paragraphs:Optional[int]=None)->None:
+async def noodle_grading_rubric(queryWithFullParagraphList, grading_prompts:List[Prompt], qaPipeline, max_paragraphs:Optional[int]=None, pipeline_config: PipelineConfig = {})->None:
     '''Will modify `queryWithFullParagraphList` in place with exam grade annotations from `qaPipeline` on the `questions` set '''
 
     query_id = queryWithFullParagraphList.queryId
@@ -52,7 +53,7 @@ async def noodle_grading_rubric(queryWithFullParagraphList, grading_prompts:List
             paragraph_id = para.paragraph_id
             paragraph_txt = para.text
 
-            answerTuples = await qaPipeline.grade_paragraph(grading_prompts, paragraph_txt=paragraph_txt)
+            answerTuples = await qaPipeline.grade_paragraph(grading_prompts, paragraph_txt=paragraph_txt, pipeline_config=pipeline_config)
 
             # for q,a in answerTuples:
                 # print(f'{a} -  {q.question}\n{paragraph_txt}\n')
@@ -97,7 +98,7 @@ async def noodle_grading_rubric(queryWithFullParagraphList, grading_prompts:List
     #     noodle_one_paragraph(para)
 
 
-async def noodle_one_query_direct_grading(queryWithFullParagraphList, grading_prompt:Prompt, qaPipeline:LlmPipeline, max_paragraphs:Optional[int]=None)->None:
+async def noodle_one_query_direct_grading(queryWithFullParagraphList, grading_prompt:Prompt, qaPipeline:LlmPipeline, max_paragraphs:Optional[int]=None, pipeline_config: PipelineConfig = {})->None:
     '''Will modify `queryWithFullParagraphList` in place with grade annotations from `qaPipeline`  '''
 
     paragraphs = queryWithFullParagraphList.paragraphs
@@ -106,7 +107,7 @@ async def noodle_one_query_direct_grading(queryWithFullParagraphList, grading_pr
     async  def noodle_one_paragraph(para):
         paragraph_txt = para.text
 
-        answerTuples = qaPipeline.grade_paragraph([grading_prompt], paragraph_txt=paragraph_txt)
+        answerTuples = qaPipeline.grade_paragraph([grading_prompt], paragraph_txt=paragraph_txt, pipeline_config=pipeline_config)
         
         (_, answer) = answerTuples[0]
 
@@ -129,7 +130,7 @@ async def noodle_one_query_direct_grading(queryWithFullParagraphList, grading_pr
 
 
 async def noodle(qaPipeline, question_set:Dict[str,List[Prompt]], paragraph_file:Path, out_file:Path, max_queries:Optional[int]=None, max_paragraphs:Optional[int]=None
-            , restart_previous_paragraph_file:Optional[Path]=None, restart_from_query:Optional[str]=None
+            , restart_previous_paragraph_file:Optional[Path]=None, restart_from_query:Optional[str]=None, pipeline_config: PipelineConfig = {}
             ):
     with gzip.open(out_file, 'wt', encoding='utf-8') as file:
 
@@ -182,10 +183,10 @@ async def noodle(qaPipeline, question_set:Dict[str,List[Prompt]], paragraph_file
                 any_prompt = grading_prompts[0]
                 if any_prompt.prompt_type() == QuestionPrompt.my_prompt_type or any_prompt.prompt_type() == NuggetPrompt.my_prompt_type:
                     # Regular path
-                    await  noodle_grading_rubric(queryWithFullParagraphList, grading_prompts, qaPipeline, max_paragraphs)
+                    await  noodle_grading_rubric(queryWithFullParagraphList, grading_prompts, qaPipeline, max_paragraphs, pipeline_config)
                 elif any_prompt.prompt_type() == DirectGradingPrompt.my_prompt_type:
                     for grading_prompt in grading_prompts: # we expect there to be only one
-                        await noodle_one_query_direct_grading(queryWithFullParagraphList, grading_prompt, qaPipeline, max_paragraphs)
+                        await noodle_one_query_direct_grading(queryWithFullParagraphList, grading_prompt, qaPipeline, max_paragraphs, pipeline_config)
                 else:
                     raise RuntimeError(f"unknown grading prompt type {any_prompt.prompt_type()}  not matching any of these: {DirectGradingPrompt.my_prompt_type}, {QuestionPrompt.my_prompt_type}, {NuggetPrompt.my_prompt_type}")
 
@@ -221,12 +222,12 @@ async def main(cmdargs=None):
 
     parser.add_argument('--llm-engine', type=LlmEngine.from_string, metavar='Choice', choices=list(LlmEngine), help='LLM backend to be used, choices: '+",".join([str(x) for x in LlmEngine]))
 
-    modelPipelineOpts = {'text2text': lambda model_name:  Text2TextPipeline(model_name, llm_engine=LlmEngine.HF_TF)
-                ,'question-answering': lambda model_name:  QaPipeline(model_name, llm_engine=LlmEngine.HF_TF)
-                ,'text-generation': lambda model_name:  TextGenerationPipeline(model_name, llm_engine=LlmEngine.HF_TF) 
-                , 'llama': lambda model_name: LlamaTextGenerationPipeline(model_name, llm_engine=LlmEngine.HF_TF)
-                ,'vLLM': lambda model_name:  TextGenerationPipeline(model_name, llm_engine=LlmEngine.VLLM) 
-                ,'OpenAI': lambda model_name:  TextGenerationPipeline(model_name, llm_engine=LlmEngine.OPEN_AI) 
+    modelPipelineOpts = {'text2text': lambda model_name, pipeline_config:  Text2TextPipeline(model_name, llm_engine=LlmEngine.HF_TF, pipeline_config=pipeline_config)
+                ,'question-answering': lambda model_name, pipeline_config:  QaPipeline(model_name, llm_engine=LlmEngine.HF_TF, pipeline_config=pipeline_config)
+                ,'text-generation': lambda model_name, pipeline_config:  TextGenerationPipeline(model_name, llm_engine=LlmEngine.HF_TF, pipeline_config=pipeline_config)
+                , 'llama': lambda model_name, pipeline_config: LlamaTextGenerationPipeline(model_name, llm_engine=LlmEngine.HF_TF, pipeline_config=pipeline_config)
+                ,'vLLM': lambda model_name, pipeline_config:  TextGenerationPipeline(model_name, llm_engine=LlmEngine.VLLM, pipeline_config=pipeline_config)
+                ,'OpenAI': lambda model_name, pipeline_config:  TextGenerationPipeline(model_name, llm_engine=LlmEngine.OPEN_AI, pipeline_config=pipeline_config)
                 }
 
     parser.add_argument('-o', '--out-file', type=str, metavar='exam-xxx.jsonl.gz', help='Output file name where paragraphs with exam grade annotations will be written to')
@@ -237,6 +238,7 @@ async def main(cmdargs=None):
     parser.add_argument('--max-queries', type=int, metavar='INT', default=None, help='limit the number of queries that will be processed (for debugging)')
     parser.add_argument('--max-paragraphs', type=int, metavar='INT', default=None, help='limit the number of paragraphs that will be processed (for debugging)')
     parser.add_argument('--model-pipeline', type=str, choices=modelPipelineOpts.keys(), required=True, metavar='MODEL', help='the huggingface pipeline used to answer questions. For example, \'sjrhuschlee/flan-t5-large-squad2\' is designed for the question-answering pipeline, where \'google/flan-t5-large\' is designed for the text2text-generation pipeline. Choices: '+", ".join(modelPipelineOpts.keys()))
+    parser.add_argument('--pipeline-config-file', type=str, metavar='PATH', help='Path to a JSON file that contains arguments to be passed when calling the model pipeline')
     parser.add_argument('--model-name', type=str, metavar='MODEL', help='the huggingface model used to answer questions')
 
     parser.add_argument('--use-nuggets', action='store_true', help="if set uses nuggets instead of questions")
@@ -285,7 +287,9 @@ async def main(cmdargs=None):
     else:
         raise f"args.question_type \'{args.question_type}\' undefined"
     
-    qaPipeline = modelPipelineOpts[args.model_pipeline](args.model_name)
+    pipeline_config = load_pipeline_config(args.pipeline_config_file)
+    qaPipeline = modelPipelineOpts[args.model_pipeline](args.model_name, pipeline_config)
+
 
     await noodle(
              qaPipeline=qaPipeline
@@ -296,6 +300,7 @@ async def main(cmdargs=None):
            , max_paragraphs = args.max_paragraphs
            # Restart logic
            , restart_previous_paragraph_file=args.restart_paragraphs_file, restart_from_query=args.restart_from_query
+           , pipeline_config=pipeline_config
            )
 
 if __name__ == "__main__":
