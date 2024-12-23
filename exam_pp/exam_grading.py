@@ -39,7 +39,7 @@ def self_ratings_from_prompt(prompt:Prompt, answer)->SelfRating:
         raise RuntimeError(f"Unknown self rating prompt: {prompt}. \n Prompt-type:{prompt.prompt_type()}")
 
 
-async def noodle_grading_rubric(queryWithFullParagraphList, grading_prompts:List[Prompt], qaPipeline, max_paragraphs:Optional[int]=None)->None:
+async def noodle_grading_rubric(queryWithFullParagraphList, grading_prompts:List[Prompt], qaPipeline, pipeline_config: PipelineConfig, max_paragraphs:Optional[int]=None)->None:
     '''Will modify `queryWithFullParagraphList` in place with exam grade annotations from `qaPipeline` on the `questions` set '''
 
     query_id = queryWithFullParagraphList.queryId
@@ -97,7 +97,7 @@ async def noodle_grading_rubric(queryWithFullParagraphList, grading_prompts:List
     #     noodle_one_paragraph(para)
 
 
-async def noodle_one_query_direct_grading(queryWithFullParagraphList, grading_prompt:Prompt, qaPipeline:LlmPipeline, max_paragraphs:Optional[int]=None)->None:
+async def noodle_one_query_direct_grading(queryWithFullParagraphList, grading_prompt:Prompt, qaPipeline:LlmPipeline, pipeline_config:PipelineConfig, max_paragraphs:Optional[int]=None)->None:
     '''Will modify `queryWithFullParagraphList` in place with grade annotations from `qaPipeline`  '''
 
     paragraphs = queryWithFullParagraphList.paragraphs
@@ -128,7 +128,7 @@ async def noodle_one_query_direct_grading(queryWithFullParagraphList, grading_pr
     #     noodle_one_paragraph(para)
 
 
-async def noodle(llmPipeline:LlmPipeline, question_set:Dict[str,List[Prompt]], paragraph_file:Path, out_file:Path, max_queries:Optional[int]=None, max_paragraphs:Optional[int]=None
+async def noodle(llmPipeline:LlmPipeline, pipeline_config:PipelineConfig, question_set:Dict[str,List[Prompt]], paragraph_file:Path, out_file:Path, max_queries:Optional[int]=None, max_paragraphs:Optional[int]=None
             , restart_previous_paragraph_file:Optional[Path]=None, restart_from_query:Optional[str]=None
             ):
     with gzip.open(out_file, 'wt', encoding='utf-8') as file:
@@ -182,10 +182,10 @@ async def noodle(llmPipeline:LlmPipeline, question_set:Dict[str,List[Prompt]], p
                 any_prompt = grading_prompts[0]
                 if any_prompt.prompt_type() == QuestionPrompt.my_prompt_type or any_prompt.prompt_type() == NuggetPrompt.my_prompt_type:
                     # Regular path
-                    await  noodle_grading_rubric(queryWithFullParagraphList, grading_prompts, llmPipeline, max_paragraphs)
+                    await  noodle_grading_rubric(queryWithFullParagraphList, grading_prompts, llmPipeline, pipeline_config, max_paragraphs)
                 elif any_prompt.prompt_type() == DirectGradingPrompt.my_prompt_type:
                     for grading_prompt in grading_prompts: # we expect there to be only one
-                        await noodle_one_query_direct_grading(queryWithFullParagraphList, grading_prompt, llmPipeline, max_paragraphs)
+                        await noodle_one_query_direct_grading(queryWithFullParagraphList, grading_prompt, llmPipeline, pipeline_config, max_paragraphs)
                 else:
                     raise RuntimeError(f"unknown grading prompt type {any_prompt.prompt_type()}  not matching any of these: {DirectGradingPrompt.my_prompt_type}, {QuestionPrompt.my_prompt_type}, {NuggetPrompt.my_prompt_type}")
 
@@ -241,12 +241,12 @@ The entries of the given RUBRIC input file will be augmented with exam grades, t
     # MAX_TOKEN_LEN=512
     # MAX_OUT_TOKENS=512
 
-    modelPipelineOpts = {'text2text': lambda model_name, MAX_TOKEN_LEN, MAX_OUT_TOKENS:  Text2TextPipeline(model_name, max_token_len=MAX_TOKEN_LEN)
-                ,'question-answering': lambda model_name, MAX_TOKEN_LEN, MAX_OUT_TOKENS:  QaPipeline(model_name, max_token_len=MAX_TOKEN_LEN, max_output_tokens=MAX_OUT_TOKENS)
-                ,'text-generation': lambda model_name, MAX_TOKEN_LEN, MAX_OUT_TOKENS:  TextGenerationPipeline(model_name, max_token_len=MAX_TOKEN_LEN, max_output_tokens=MAX_OUT_TOKENS) 
-                , 'llama': lambda model_name, MAX_TOKEN_LEN, MAX_OUT_TOKENS: LlamaTextGenerationPipeline(model_name, max_token_len=MAX_TOKEN_LEN, max_output_tokens=MAX_OUT_TOKENS)
-                ,'vLLM': lambda model_name, MAX_TOKEN_LEN, MAX_OUT_TOKENS:  VllmPipeline(model_name, max_token_len=MAX_TOKEN_LEN, max_output_tokens=MAX_OUT_TOKENS) 
-                ,'OpenAI': lambda model_name, MAX_TOKEN_LEN, MAX_OUT_TOKENS:  OpenAIPipeline(model_name, max_token_len=MAX_TOKEN_LEN, max_output_tokens=MAX_OUT_TOKENS) 
+    modelPipelineOpts = {'text2text': lambda model_name, pipeline_config:  Text2TextPipeline(model_name, pipeline_config)
+                ,'question-answering': lambda model_name, pipeline_config:  QaPipeline(model_name, pipeline_config)
+                ,'text-generation': lambda model_name, pipeline_config:  TextGenerationPipeline(model_name, pipeline_config)
+                , 'llama': lambda model_name, pipeline_config: LlamaTextGenerationPipeline(model_name, pipeline_config)
+                ,'vLLM': lambda model_name, pipeline_config:  VllmPipeline(model_name, pipeline_config)
+                ,'OpenAI': lambda model_name, pipeline_config:  OpenAIPipeline(model_name, pipeline_config)
                 }
 
     parser.add_argument('-o', '--out-file', type=str, metavar='exam-xxx.jsonl.gz', help='Output file name where paragraphs with exam grade annotations will be written to')
@@ -256,11 +256,12 @@ The entries of the given RUBRIC input file will be augmented with exam grades, t
     
 
     parser.add_argument('--model-pipeline', type=str, choices=modelPipelineOpts.keys(), required=True, metavar='MODEL', help='the huggingface pipeline used to answer questions. For example, \'sjrhuschlee/flan-t5-large-squad2\' is designed for the question-answering pipeline, where \'google/flan-t5-large\' is designed for the text2text-generation pipeline. Choices: '+", ".join(modelPipelineOpts.keys()))
+    parser.add_argument("--pipeline-config", type=str, metavar='PATH', help="Path to pipeline configuration file")
     parser.add_argument('--model-name', type=str, metavar='MODEL', help='the huggingface model used to answer questions')
     parser.add_argument('--max-tokens', type=int, metavar="N", default=512, help="total number of tokens for input+output (for generative LLMs, just input)")
     parser.add_argument('--max-out-tokens', type=int, metavar="N", default=512, help="total number of tokens for generated output (not used by some HF pipelines)")
-
-
+    parser.add_argument('--max-queries', type=int, metavar='INT', default=None, help='limit the number of queries that will be processed (for debugging)')
+    parser.add_argument('--max-paragraphs', type=int, metavar='INT', default=None, help='limit the number of paragraphs that will be processed (for debugging)')
     parser.add_argument('--prompt-class', type=str, choices=get_prompt_classes(), required=True, default="QuestionPromptWithChoices", metavar="CLASS"
                         , help="The QuestionPrompt class implementation to use. Choices: "+", ".join(get_prompt_classes()))
 
@@ -308,11 +309,15 @@ The entries of the given RUBRIC input file will be augmented with exam grades, t
                                               )
     else:
         raise f"args.question_type \'{args.question_type}\' undefined"
-    
-    llmPipeline = modelPipelineOpts[args.model_pipeline](args.model_name, args.max_tokens, args.max_out_tokens)
+
+    pipeline_config = load_pipeline_config(args.pipeline_config)
+    print("Pipeline config:")
+    print(pipeline_config)
+    llmPipeline = modelPipelineOpts[args.model_pipeline](args.model_name, pipeline_config)
 
     await noodle(
              llmPipeline=llmPipeline
+           , pipeline_config=pipeline_config
            , question_set=question_set
            , paragraph_file= args.paragraph_file
            , out_file = args.out_file
