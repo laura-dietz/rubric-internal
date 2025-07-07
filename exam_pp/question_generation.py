@@ -5,7 +5,7 @@ import time
 import datetime
 from typing import TextIO
 
-import trec_car.read_data as trec_car
+# import trec_car.read_data as trec_car
 
 from .question_bank_loader import ExamQuestion, QueryQuestionBank, emit_test_bank_entry, write_single_query_test_bank, writeTestBank
 
